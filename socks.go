@@ -59,7 +59,7 @@ const (
 func DialSocksProxy(socksType int, proxy string) func(string, string) (net.Conn, error) {
 	if socksType == SOCKS5 {
 		return func (_, targetAddr string) (conn net.Conn, err error) {
-			return dialSocks5(proxy, targetAddr)
+			return dialSocks5(proxy, targetAddr, "", "")
 		}
 	}
 	
@@ -69,7 +69,13 @@ func DialSocksProxy(socksType int, proxy string) func(string, string) (net.Conn,
 	}
 }
 
-func dialSocks5(proxy, targetAddr string) (conn net.Conn, err error) {
+func DialSocks5Auth(proxy, user, pass string) func(string, string) (net.Conn, error) {
+  return func (_, targetAddr string) (conn net.Conn, err error) {
+    return dialSocks5(proxy, targetAddr, user, pass)
+  }
+}
+
+func dialSocks5(proxy, targetAddr, user, pass string) (conn net.Conn, err error) {
 	// dial TCP
 	conn, err = net.Dial("tcp", proxy)
 	if err != nil { return }
@@ -77,8 +83,9 @@ func dialSocks5(proxy, targetAddr string) (conn net.Conn, err error) {
 	// version identifier/method selection request
 	req := []byte{
 		5,	// version number
-		1,	// number of methods
+		2,	// number of methods
 		0,	// method 0: no authentication (only anonymous access supported for now)
+    2,  // method 0x02: authentication
 	}
 	resp, err := sendReceive(conn, req)
 	if err != nil {
@@ -87,25 +94,45 @@ func dialSocks5(proxy, targetAddr string) (conn net.Conn, err error) {
 		err = errors.New("Server does not respond properly.")
 	} else if resp[0] != 5 {
 		err = errors.New("Server does not support Socks 5.")
-	} else if resp[1] != 0 {	// no auth
-		err = errors.New("socks method negotiation failed.")
-		return
+	} 
+  // check method
+  if resp[1] == 2 {	// auth
+    req = []byte{
+      1,
+      byte(len(user)),
+    }
+    req = append(req, []byte(user)...)
+    req = append(req, byte(len(pass)))
+    req = append(req, []byte(pass)...)
+      
+    resp, err = sendReceive(conn, req)
+    if err != nil { return }
+    if len(resp) != 2 {
+      err = errors.New("Authentication failure, not enough returned.")
+    }
+
 	}
-	
+
 	// detail request
 	host, port, err := splitHostPort(targetAddr)
+  // resolve host here
+  addrs, err := net.LookupHost(host)
+  host = string(addrs[0])
 	req = []byte{
 		5,	// version number
 		1,	// connect command
 		0,	// reserved, must be zero
-		3,	// address type, 3 means domain name
-		byte(len(host)), // address length
+		1,	// address type, 3 means domain name
 	}
-	req = append(req, []byte(host)...)
+
+  // convert to network ip
+  req = append(req, ([]byte)(net.ParseIP(host).To4())...)
 	req = append(req, []byte{
 		byte(port >> 8),	// higher byte of destination port
 		byte(port),			// lower byte of destination port (big endian)
 	}...)
+
+  fmt.Println(req)
 	resp, err = sendReceive(conn, req)
 	if err != nil {
 		return
@@ -114,7 +141,7 @@ func dialSocks5(proxy, targetAddr string) (conn net.Conn, err error) {
 	} else if resp[1] != 0 {
 		err = errors.New("Can't complete SOCKS5 connection.")
 	}
-	
+
 	return
 }
 
