@@ -20,3 +20,5 @@ A SOCKS (SOCKS4, SOCKS4A and SOCKS5) Proxy Package for Go
 
 ##Complete Documentation
 http://go.pkgdoc.org/github.com/hailiang/gosocks
+
+
